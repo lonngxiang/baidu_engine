@@ -1,0 +1,212 @@
+import gevent
+from gevent import monkey, pool
+
+gevent.monkey.patch_all()
+import requests
+from lxml import etree
+import re
+import time
+import datetime
+from collections import Counter
+import pymysql
+import json
+import base64
+import redis
+import random
+
+
+requests.packages.urllib3.disable_warnings()
+locations = ['上海:310100', '广州:440100', '深圳:440300', '天津:120100', '沈阳:210100', '大连:210200', '哈尔滨:230100', '济南:370100', '青岛:370200', '南京:320100', '杭州:330100', '武汉:420100']
+
+if len(str(datetime.datetime.now().month))==1:
+    table_name = str(datetime.datetime.now().year) + "0" + str(datetime.datetime.now().month)
+else:
+    table_name = str(datetime.datetime.now().year)+str(datetime.datetime.now().month)
+
+
+
+def down_ip():
+    kk =random.choice(locations).split(":")
+    id = kk[1]
+    id_location = kk[0]
+    attempts = 0
+    success = False
+    while attempts < 5 and not success:
+        try:
+            url1 = "http://183.129.207.86:88/open?user_name=hxfy2019&timestamp=1554706833&md5=94a19c9473b12e492966a2daa281c4c6&pattern=json&fmt=4&number=1&city={}".format(
+                id)
+            # url1 = "http://183.129.244.16:88/open?user_name=huanxitp1&timestamp=1575862261&md5=C6305B4638675FE8B8F677C6573D0346&pattern=json&number=1&city={}".format(
+            #     id)
+            html1 = json.loads(requests.get(url1, verify=False, timeout=6).text)
+            html1_ok = html1['domain'] + ":" + str(html1['port'][0])
+            success = True
+            print(html1_ok,id_location)
+            return html1_ok
+        except Exception as e:
+            print(e,"%%%%%")
+            attempts += 1
+            print("重试%d次" % attempts)
+            if attempts == 5:
+                break
+            print(id_location,":该地区暂时无ip可用")
+            pass
+
+
+def read_keyword_mysql():
+    # conn = pymysql.connect(host='pccw-test-public.mysql.rds.aliyuncs.com', user='pccw', password='#EDC3edc', port=3306,
+    #                        db='huanxi_pms_dev')
+    conn = pymysql.connect(host='pmsdb-online.mysql.rds.aliyuncs.com', user='pmsdb', password='TF96qhg4m8c6', port=3306, db='pmsdb')
+
+    cursor = conn.cursor()
+
+    hot = "select key_word,id from hx_media_keyword where key_type=2 and status=0"
+    # hot="select * from hx_media_scrapy_info_201912 limit 5"
+    cursor.execute(hot)
+    # 获取所有记录列表
+    results = cursor.fetchall()
+    conn.commit()
+    return list(results)
+
+def blacklist_word_mysql():
+    # conn = pymysql.connect(host='pccw-test-public.mysql.rds.aliyuncs.com', user='pccw', password='#EDC3edc', port=3306,
+    #                        db='huanxi_pms_dev')
+    conn = pymysql.connect(host='pmsdb-online.mysql.rds.aliyuncs.com', user='pmsdb', password='TF96qhg4m8c6', port=3306, db='pmsdb')
+
+    cursor = conn.cursor()
+
+    hot = "select key_word from hx_media_black_keyword where key_type=3 and status=0"
+    # hot="select * from hx_media_scrapy_info_201912 limit 5"
+    cursor.execute(hot)
+    # 获取所有记录列表
+    results = cursor.fetchall()
+    conn.commit()
+    return list(results)
+
+
+def save_mysql(mysql_hotels):
+    # conn = pymysql.connect(host='pccw-test-public.mysql.rds.aliyuncs.com', user='pccw', password='#EDC3edc', port=3306, db='huanxi_pms_dev')
+    conn = pymysql.connect(host='pmsdb-online.mysql.rds.aliyuncs.com', user='pmsdb', password='TF96qhg4m8c6', port=3306, db='pmsdb')
+
+    cursor = conn.cursor()
+    cursor.execute(mysql_hotels)
+    conn.commit()
+    print("插入mysql成功")
+
+
+def set_redis(url):
+    # r = redis.Redis(host="localhost", port=6379, db=9)
+    r = redis.Redis(host="online-pms.redis.rds.aliyuncs.com", password='KW3t6a8N49sjxp', port=6379, db=8)
+
+    if r.sismember("search1",url) == False:
+        r.sadd("search1", url)
+        return False
+    else:
+        return True
+
+
+def baidu_down(url):
+
+    headers={
+        "Host":"www.baidu.com",
+        "Cookie":"BIDUPSID=68B1305AE26092877281E9DF9821E0C1; PSTM=1575368050; BAIDUID=68B1305AE26092875E64544719DE2693:FG=1; BD_UPN=123253; BDUSS=d1TzNCSUlOQX4yQ1ZYQ0RhbGRlQ3BqRDhtM2tNU01leFhTLUdxbmpiaExSUkZlRVFBQUFBJCQAAAAAAAAAAAEAAAClxzIWwbDk9MKiAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEu46V1LuOldVF; BDORZ=B490B5EBF6F3CD402E515D22BCDA1598; delPer=0; BD_CK_SAM=1; PSINO=2; H_PS_PSSID=1434_21111_30211_20692_26350; H_PS_645EC=aeceoycwTMmL5wJDoDElui7LZPalg7Pmrlo1itlgm7GJT0P1VQH9x%2BB2g34",
+        "User-Agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.108 Safari/537.36"
+    }
+    html=requests.get(url,headers=headers)
+    html.encoding="utf-8"
+    # print(html.text)
+    return  etree.HTML(html.text)
+
+
+def baidu_down1(url):
+    html = requests.get(url=url,allow_redirects=False)
+    print(html.status_code)
+    # print(html.headers["location"])
+    if html.status_code == 302:
+        new_id_url = html.headers["location"]
+        # print(new_id_url)
+
+        return new_id_url
+    else:
+        print("++++++++++++++++")
+        # print(url)
+        # print(requests.get(url=url,headers=headers1).text)
+        return etree.HTML(requests.get(url=url).text)
+
+def baidu_down2(url):
+
+    headers={
+    "User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/71.0.3578.80 Safari/537.36"
+    }
+    html=requests.get(url,headers=headers)
+    html.encoding="gb2312"
+    # print(html.text)
+    # print(str(base64.b64encode(html.text.encode("utf-8")),"utf-8"))
+    return  html.text
+
+
+
+ try:
+        #=======百度===========
+        for j in range(10):
+            print("第%d页" % (j + 1))
+            url1 = "https://www.baidu.com/s?wd={}&pn={}".format(key_word,
+                j * 10)
+            nowTime = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            # url1="https://www.baidu.com/s?ie=utf-8&f=8&wd={}&si=xiaohongshu.com&ct=2097152&gpc=stf%3D1547368671%2C1547455071%7Cstftype%3D1"
+            html1 = baidu_down(url1)
+            if html1.xpath('//div[@id="page"]/strong'):
+                # for i in range(1):
+                for i in range(len(html1.xpath('//div[@id="content_left"]/div'))):
+                    if  html1.xpath('//div[@id="content_left"]/div[{}]/@id'.format(i + 1))[0] !="rs_top_new":
+
+                        if "result-op" not in html1.xpath('//div[@id="content_left"]/div[{}]/@class'.format(i + 1))[0].split(" "):
+                            titile1 = html1.xpath('//div[@id="content_left"]/div[{}]/h3'.format(i + 1))[0]
+                            title = "[{}]".format(key_word)+" "+titile1.xpath('string(.)')
+                            try:
+                                if html1.xpath('//div[@id="content_left"]/div[{}]//div[contains(@class,"c-span18")]'.format(i + 1)):
+                                    content1 = \
+                                    html1.xpath('//div[@id="content_left"]/div[{}]//div[contains(@class,"c-span18")]'.format(i + 1))[0]
+                                    content = content1.xpath('string(.)')
+                                else:
+                                    content1 = html1.xpath('//div[@id="content_left"]/div[{}]//div[@class="c-abstract"]'.format(i + 1))[0]
+                                    content = content1.xpath('string(.)')
+                            except:
+                                pass
+                            # titile = re.findall('- (.*)', titile2)[0]
+                            # print(titile,content)
+                            link1 = html1.xpath('//div[@id="content_left"]/div[{}]/h3/a/@href'.format(i + 1))[0]
+                            detil_url = baidu_down1(link1)
+                            try:
+                                if html1.xpath('//div[@id="content_left"]/div[{}]//div[@class="f13"]/a[2]/@href'.format(i + 1)):
+                                    kuaizao_url = html1.xpath('//div[@id="content_left"]/div[{}]//div[@class="f13"]/a[2]/@href'.format(i + 1))[0]
+                                else:
+                                    kuaizao_url =html1.xpath('//div[@id="content_left"]/div[{}]//div[@class="g"]/a/@href'.format(i + 1))[0]
+
+                            except:
+                                pass
+                            kuaizao_html = baidu_down2(kuaizao_url)
+                            print("baidu",title,content,detil_url,kuaizao_url,)
+                            print("8******")
+                            blacklist_nums = 0
+                            for blacklist_word in blacklist_words:
+                                if blacklist_word not in title:
+                                    blacklist_nums += 1
+                            black_urls_nums = 0
+                            for black_url in black_urls:
+                                if black_url not in detil_url:
+                                    black_urls_nums += 1
+                            if blacklist_nums == len(blacklist_words) and black_urls_nums == len(black_urls):
+
+                                url_judge = set_redis(detil_url)
+                                if url_judge == False:
+
+                                    # print(kuaizao_html)
+                                    # mysql save
+                                    hot = "insertme, str(base64.b64encode(kuaizao_html.encode("utf-8")), "utf-8"), 1,nowTime,keyword_id)
+                                    save_mysql(hot)
+                                else:
+                                    print("重复数据")
+                                    pass
+    except Exception as e:
+        print(e,"&&&&&")
+        pass
